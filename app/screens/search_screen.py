@@ -104,7 +104,7 @@ class SearchScreen(MDScreen):
         self.ids.status_label.text = f"{len(results)} results"
 
         for i, song in enumerate(results):
-            dur = song.get("duration", 0)
+            dur = int(song.get("duration") or 0)
             dur_str = f"{dur // 60}:{dur % 60:02d}" if dur else ""
 
             item = MDListItem(
