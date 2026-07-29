@@ -21,7 +21,16 @@ jobs:
           buildozer_version: master
           workdir: app
 
+      - name: Upload Build Log (if failed)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: app/.buildozer/android/platform/build-*/build.log*
+          retention-days: 5
+
       - name: Upload APK
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: HarmonyMusic-debug
