@@ -1,0 +1,11 @@
+venv/
+__pycache__/
+*.pyc
+*.pyo
+.audio_cache/
+token.txt
+.kivy/
+.buildozer/
+bin/
+*.apk
+*.aab
