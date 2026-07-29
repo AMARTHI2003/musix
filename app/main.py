@@ -104,6 +104,10 @@ Builder.load_string("""
 
 class RootScreenManager(MDScreenManager):
     def on_tab_switch(self, bar, item, item_icon, item_text):
+        # If we're on the full player screen, go back to app first
+        if self.current != "app":
+            self.current = "app"
+
         tab_map = {
             "Home": "home",
             "Search": "search",
@@ -111,7 +115,10 @@ class RootScreenManager(MDScreenManager):
             "Create": "home",
         }
         screen_name = tab_map.get(item_text, "home")
-        self.ids.tab_manager.current = screen_name
+        try:
+            self.ids.tab_manager.current = screen_name
+        except Exception as e:
+            print(f"Tab switch error: {e}")
 
 
 class HarmonyApp(MDApp):
