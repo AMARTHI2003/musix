@@ -3,7 +3,7 @@ name: Build Harmony Music APK
 on:
   push:
     branches: [ main ]
-  workflow_dispatch:   # Allows manual trigger from GitHub UI
+  workflow_dispatch:
 
 jobs:
   build-apk:
@@ -13,21 +13,55 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Build with Buildozer
-        uses: ArtemSBulgakov/buildozer-action@v1
-        id: buildozer
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
         with:
-          command: buildozer android debug
-          buildozer_version: master
-          workdir: app
+          python-version: '3.11'
 
-      - name: Upload Build Log (if failed)
-        if: failure()
-        uses: actions/upload-artifact@v4
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y \
+            git zip unzip \
+            openjdk-17-jdk \
+            autoconf libtool \
+            pkg-config \
+            zlib1g-dev \
+            libncurses5-dev \
+            libncursesw5-dev \
+            libtinfo6 \
+            cmake \
+            libffi-dev \
+            libssl-dev \
+            build-essential \
+            ccache
+
+      - name: Cache Buildozer global directory
+        uses: actions/cache@v4
         with:
-          name: build-log
-          path: app/.buildozer/android/platform/build-*/build.log*
-          retention-days: 5
+          path: ~/.buildozer
+          key: buildozer-${{ runner.os }}-${{ hashFiles('app/buildozer.spec') }}
+          restore-keys: |
+            buildozer-${{ runner.os }}-
+
+      - name: Cache pip packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ runner.os }}-${{ hashFiles('app/buildozer.spec') }}
+
+      - name: Install Python build tools
+        run: |
+          pip install --upgrade pip setuptools wheel
+          pip install cython==0.29.37
+          pip install buildozer==1.5.0
+
+      - name: Build APK
+        working-directory: app
+        run: |
+          yes | buildozer android debug 2>&1
+        env:
+          JAVA_HOME: /usr/lib/jvm/java-17-openjdk-amd64
 
       - name: Upload APK
         if: success()
@@ -36,3 +70,13 @@ jobs:
           name: HarmonyMusic-debug
           path: app/bin/*.apk
           retention-days: 30
+
+      - name: Upload build log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: buildozer-log
+          path: |
+            app/.buildozer/android/platform/build-*/build.log
+            /home/runner/.buildozer/
+          retention-days: 3
