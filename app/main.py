@@ -125,7 +125,7 @@ class HarmonyApp(MDApp):
     def build(self):
         self.theme_cls.theme_style = "Dark"
         self.theme_cls.primary_palette = "Purple"
-        self.title = "Harmony Music"
+        self.title = "MUSIX"
         
         sm = RootScreenManager()
         sm.current = "app"

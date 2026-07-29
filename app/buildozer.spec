@@ -1,5 +1,5 @@
 [app]
-title = Harmony Music
+title = MUSIX
 package.name = harmonymusic
 package.domain = org.harmonymusic
 source.dir = .
