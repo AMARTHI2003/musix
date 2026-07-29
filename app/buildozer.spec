@@ -8,7 +8,7 @@ source.exclude_dirs = venv,.buildozer,.audio_cache,__pycache__
 
 version = 1.0.0
 
-requirements = python3==3.11,kivy==2.3.1,kivymd,requests,pillow,urllib3,certifi,charset-normalizer,idna,pyjwt
+requirements = python3,kivy==2.3.1,kivymd,requests,pillow,urllib3,certifi,charset-normalizer,idna,pyjwt
 
 # Android screen orientation
 orientation = portrait
