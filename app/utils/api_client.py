@@ -3,10 +3,7 @@ import requests
 import threading
 from kivy.utils import platform
 
-if platform == "android":
-    BASE_URL = "http://10.0.2.2:8000"  # Android emulator -> host machine
-else:
-    BASE_URL = "http://localhost:8000"  # Desktop dev
+BASE_URL = "https://musix-mfqx.onrender.com"
 
 class HarmonyAPI:
     """Async-friendly API client for the Harmony Music backend."""
