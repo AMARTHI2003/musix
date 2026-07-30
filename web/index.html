@@ -446,13 +446,41 @@ function switchTab(tab, btn) {
   if (tab === "library") renderLibrary();
 }
 
+// ── Wake-up ping: keeps retrying until backend responds ──
+async function wakeBackend(onStatus) {
+  const MAX_WAIT = 90000; // 90 seconds max
+  const POLL = 3000;
+  const start = Date.now();
+  let attempt = 0;
+  while (Date.now() - start < MAX_WAIT) {
+    try {
+      const res = await fetch(`${BASE}/`, { signal: AbortSignal.timeout(5000) });
+      if (res.ok) return true;
+    } catch(_) {}
+    attempt++;
+    const waited = Math.round((Date.now() - start) / 1000);
+    onStatus(`Waking up server… ${waited}s`);
+    await new Promise(r => setTimeout(r, POLL));
+  }
+  return false;
+}
+
 // ── Home: load trending on start ──
 async function loadHome() {
-  const queries = ["trending music 2025", "latest english pop songs 2025", "lofi hip hop mix"];
   const listEl = document.getElementById("home-list");
   const statusEl = document.getElementById("home-status");
   listEl.innerHTML = '<div class="spinner"></div>';
-  
+  statusEl.textContent = "Connecting…";
+
+  // First, make sure backend is awake
+  const alive = await wakeBackend(msg => { statusEl.textContent = msg; });
+  if (!alive) {
+    statusEl.textContent = "Server unavailable. Please try again later.";
+    listEl.innerHTML = "";
+    return;
+  }
+
+  statusEl.textContent = "Loading trending…";
   try {
     const res = await fetch(`${BASE}/songs/search?q=trending+music+2025`);
     const songs = await res.json();
@@ -461,10 +489,11 @@ async function loadHome() {
     listEl.innerHTML = "";
     songs.forEach((s, i) => listEl.appendChild(makeSongCard(s, i, songs)));
   } catch(e) {
-    statusEl.textContent = "Couldn't load — Render may be waking up. Try again in a moment.";
+    statusEl.textContent = "Failed to load trending. Tap a genre or search for a song.";
     listEl.innerHTML = "";
   }
 }
+
 
 // ── Search ──
 async function doSearch() {
@@ -478,7 +507,17 @@ async function searchFor(q) {
   const listEl = document.getElementById("search-list");
   const statusEl = document.getElementById("search-status");
   listEl.innerHTML = '<div class="spinner"></div>';
-  statusEl.textContent = "Searching...";
+  statusEl.textContent = "Connecting…";
+
+  // Wake backend if needed
+  const alive = await wakeBackend(msg => { statusEl.textContent = msg; });
+  if (!alive) {
+    statusEl.textContent = "Server unavailable. Please try again.";
+    listEl.innerHTML = "";
+    return;
+  }
+
+  statusEl.textContent = "Searching…";
   try {
     const res = await fetch(`${BASE}/songs/search?q=${encodeURIComponent(q)}`);
     const songs = await res.json();
@@ -490,6 +529,7 @@ async function searchFor(q) {
     listEl.innerHTML = "";
   }
 }
+
 
 // ── Song Card ──
 function makeSongCard(song, idx, songList) {
