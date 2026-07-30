@@ -103,7 +103,7 @@ Builder.load_string("""
 
 
 class RootScreenManager(MDScreenManager):
-    def on_tab_switch(self, bar, item, item_icon, item_text):
+    def on_tab_switch(self, item, item_icon, item_text):
         # If we're on the full player screen, go back to app first
         if self.current != "app":
             self.current = "app"
