@@ -408,6 +408,14 @@
 const BASE = "https://musix-mfqx.onrender.com";
 const audio = document.getElementById("audio");
 
+// Show audio errors visibly
+audio.addEventListener('error', (e) => {
+  const codes = {1:'ABORTED',2:'NETWORK',3:'DECODE',4:'NOT_SUPPORTED'};
+  const msg = codes[audio.error?.code] || 'UNKNOWN';
+  console.error('Audio error:', msg, audio.src);
+  setLoading(false);
+});
+
 // ── State ──
 let queue = [], qIndex = 0, currentSong = null;
 let favourites = JSON.parse(localStorage.getItem("musix_favs") || "[]");
@@ -715,9 +723,11 @@ function renderLibrary() {
   favourites.forEach((s, i) => listEl.appendChild(makeSongCard(s, i, favourites)));
 }
 
-// ── Service Worker ──
+// ── Kill old service workers (they were caching stale HTML) ──
 if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('sw.js').catch(() => {});
+  navigator.serviceWorker.getRegistrations().then(regs => {
+    regs.forEach(r => r.unregister());
+  });
 }
 
 // ── Init ──
