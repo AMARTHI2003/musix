@@ -547,11 +547,17 @@ function playSong(song, idx, songList) {
   // Show loading
   setLoading(true);
 
-  // Load stream
-  const url = `${BASE}/songs/stream/${song.id}.m4a`;
+  // Load stream — use backend proxy (handles yt-dlp bot bypass internally)
+  const url = `${BASE}/songs/stream/${song.id}`;
   audio.src = url;
   audio.load();
-  audio.play().then(() => setLoading(false)).catch(() => setLoading(false));
+  audio.play()
+    .then(() => setLoading(false))
+    .catch(err => {
+      console.warn('Autoplay blocked or failed:', err);
+      setLoading(false);
+      // Still show paused state — user can tap play
+    });
 }
 
 function setLoading(v) {
