@@ -59,32 +59,87 @@ else:
 
 # ── Search ─────────────────────────────────────────────────────────────────────
 def _run_search(q: str):
-    """Blocking search using subprocess (runs in thread pool)."""
-    proc = subprocess.run(
-        [YT_DLP, f"ytsearch5:{q}", "--dump-json", "--flat-playlist"] + BYPASS_ARGS,
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-    if proc.returncode != 0:
-        raise RuntimeError(f"yt-dlp search failed: {proc.stderr[:400]}")
+    """Search YouTube using yt-dlp Python API (no subprocess crash on Py3.14)."""
+    import yt_dlp
 
     results = []
-    for line in proc.stdout.strip().split("\n"):
-        if not line.strip():
-            continue
-        try:
-            item = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        results.append({
-            "id": item.get("id"),
-            "title": item.get("title"),
-            "artist": item.get("uploader") or item.get("channel") or "Unknown Artist",
-            "thumbnail": f"https://i.ytimg.com/vi/{item.get('id')}/hqdefault.jpg",
-            "duration": item.get("duration"),
-        })
+    ydl_opts = {
+        'quiet': True,
+        'no_warnings': True,
+        'extract_flat': True,
+        'force_ipv4': True,
+        'extractor_args': {'youtube': {'player_client': ['android', 'web']}},
+    }
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(f"ytsearch5:{q}", download=False)
+            entries = info.get('entries', []) if info else []
+            for item in entries:
+                if not item:
+                    continue
+                vid_id = item.get('id') or item.get('url', '').split('v=')[-1]
+                results.append({
+                    'id': vid_id,
+                    'title': item.get('title', 'Unknown'),
+                    'artist': item.get('uploader') or item.get('channel') or 'Unknown Artist',
+                    'thumbnail': f"https://i.ytimg.com/vi/{vid_id}/hqdefault.jpg",
+                    'duration': item.get('duration'),
+                })
+    except Exception as e:
+        raise RuntimeError(f"yt-dlp Python API search failed: {e}")
+
     return results
+
+
+def _run_search_fallback(q: str):
+    """Fallback search using innertube (YouTube internal API, no yt-dlp needed)."""
+    import innertube
+    client = innertube.InnerTube("WEB")
+    data = client.search(q)
+
+    # Parse the nested YouTube response structure
+    out = []
+    try:
+        section = (
+            data.get("contents", {})
+            .get("twoColumnSearchResultsRenderer", {})
+            .get("primaryContents", {})
+            .get("sectionListRenderer", {})
+            .get("contents", [{}])[0]
+            .get("itemSectionRenderer", {})
+            .get("contents", [])
+        )
+        for item in section:
+            vr = item.get("videoRenderer", {})
+            vid_id = vr.get("videoId", "")
+            if not vid_id:
+                continue
+            title = (vr.get("title", {}).get("runs") or [{}])[0].get("text", "Unknown")
+            artist = (
+                vr.get("ownerText", {}).get("runs") or
+                vr.get("longBylineText", {}).get("runs") or
+                [{}]
+            )[0].get("text", "Unknown Artist")
+            # Duration from "lengthText"
+            dur_text = (vr.get("lengthText") or {}).get("simpleText", "") or ""
+            parts = dur_text.split(":")
+            try:
+                secs = int(parts[-1]) + int(parts[-2]) * 60 if len(parts) >= 2 else int(parts[0])
+            except Exception:
+                secs = None
+            out.append({
+                "id": vid_id,
+                "title": title,
+                "artist": artist,
+                "thumbnail": f"https://i.ytimg.com/vi/{vid_id}/hqdefault.jpg",
+                "duration": secs,
+            })
+            if len(out) >= 5:
+                break
+    except Exception as e:
+        raise RuntimeError(f"innertube search parse failed: {e}")
+
+    return out
 
 
 @router.get("/search")
@@ -92,8 +147,15 @@ async def search_songs(q: str = Query(..., min_length=1)):
     """Search YouTube for songs. Returns up to 5 results."""
     try:
         loop = asyncio.get_event_loop()
-        results = await loop.run_in_executor(_executor, _run_search, q)
-        return results
+        try:
+            results = await loop.run_in_executor(_executor, _run_search, q)
+            if results:
+                return results
+            raise RuntimeError("Empty results from yt-dlp")
+        except Exception as e1:
+            print(f"[WARN] yt-dlp search failed: {e1}. Trying youtube-search-python...")
+            results = await loop.run_in_executor(_executor, _run_search_fallback, q)
+            return results
     except subprocess.TimeoutExpired:
         raise HTTPException(status_code=504, detail="Search timed out")
     except Exception as e:
