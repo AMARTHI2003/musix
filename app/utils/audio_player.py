@@ -29,8 +29,12 @@ class AudioPlayer(EventDispatcher):
         self._update_event = None
         import os
         from kivy.app import App
-        # Temporary cache for Kivy app
-        self.cache_dir = os.path.join(os.path.dirname(__file__), "..", ".audio_cache")
+        # Use Kivy's built-in user_data_dir to avoid write permission issues on Android
+        app = App.get_running_app()
+        if app:
+            self.cache_dir = os.path.join(app.user_data_dir, ".audio_cache")
+        else:
+            self.cache_dir = os.path.join(os.path.dirname(__file__), "..", ".audio_cache")
         os.makedirs(self.cache_dir, exist_ok=True)
 
     def play_song(self, song):

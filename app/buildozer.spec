@@ -8,7 +8,7 @@ source.exclude_dirs = venv,.buildozer,.audio_cache,__pycache__,bin
 
 version = 1.0.0
 
-requirements = python3,kivy==2.3.1,https://github.com/kivymd/KivyMD/archive/master.zip,requests,pillow,urllib3,certifi,charset-normalizer,idna,pyjwt
+requirements = python3,kivy==2.3.1,https://github.com/kivymd/KivyMD/archive/master.zip,requests,pillow,urllib3,certifi,charset-normalizer,idna,pyjwt,openssl
 
 # Android screen orientation
 orientation = portrait
