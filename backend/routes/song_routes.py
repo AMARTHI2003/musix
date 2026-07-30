@@ -119,12 +119,14 @@ def _get_stream_url(video_id: str) -> str:
         text=True,
         timeout=30,
     )
+    # Check stdout for a valid URL — returncode may be 1 due to cookie-save
+    # failures on read-only filesystems (Render), even if URL extraction succeeded.
     stream_url = proc.stdout.strip().split("\n")[0].strip()
-    if not stream_url or proc.returncode != 0:
-        raise RuntimeError(
-            f"yt-dlp URL extraction failed (rc={proc.returncode}): {proc.stderr[:400]}"
-        )
-    return stream_url
+    if stream_url and stream_url.startswith("http"):
+        return stream_url
+    raise RuntimeError(
+        f"yt-dlp URL extraction failed (rc={proc.returncode}): {proc.stderr[:400]}"
+    )
 
 
 def _get_stream_url_pytubefix(video_id: str) -> str:
