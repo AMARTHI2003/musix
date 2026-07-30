@@ -34,6 +34,28 @@ BYPASS_ARGS = [
     "--no-check-certificates",
 ]
 
+# YouTube has started blocking Render's (and most cloud) IPs outright with
+# "Sign in to confirm you're not a bot" — the android/web client spoofing
+# above is no longer enough on its own. The only reliable workaround left is
+# supplying cookies from a real, logged-in YouTube session. If a cookies
+# file is present (see YT_COOKIES_PATH / README for how to generate one),
+# pass it to yt-dlp so it authenticates as a real browser session instead
+# of an anonymous datacenter request.
+YT_COOKIES_PATH = os.environ.get(
+    "YT_COOKIES_PATH",
+    os.path.join(os.path.dirname(__file__), "..", "cookies.txt"),
+)
+if os.path.exists(YT_COOKIES_PATH):
+    BYPASS_ARGS += ["--cookies", YT_COOKIES_PATH]
+    print(f"[INFO] Using YouTube cookies from {YT_COOKIES_PATH}")
+else:
+    print(
+        f"[WARN] No YouTube cookies file found at {YT_COOKIES_PATH} — "
+        "search may work but stream/download will likely fail with "
+        "'Sign in to confirm you're not a bot' since Render's IP is "
+        "flagged. See README for how to generate cookies.txt."
+    )
+
 
 # ── Search ─────────────────────────────────────────────────────────────────────
 def _run_search(q: str):
