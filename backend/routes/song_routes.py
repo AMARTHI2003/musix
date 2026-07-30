@@ -312,10 +312,12 @@ async def stream_song(video_id: str, request: Request):
         raise HTTPException(status_code=502, detail=f"Upstream audio fetch failed: {e}")
 
     status_code = upstream.status_code  # 200 or 206
+    # Force audio/mp4 — Google returns "video/mp4" which browsers refuse to
+    # play inside an <audio> element. The data is audio-only either way.
     resp_headers = {
         "Accept-Ranges": "bytes",
         "Cache-Control": "no-cache",
-        "Content-Type": upstream.headers.get("Content-Type", "audio/mp4"),
+        "Content-Type": "audio/mp4",
     }
     if "Content-Length" in upstream.headers:
         resp_headers["Content-Length"] = upstream.headers["Content-Length"]
@@ -330,7 +332,7 @@ async def stream_song(video_id: str, request: Request):
     return StreamingResponse(
         upstream_iter(),
         status_code=status_code,
-        media_type=resp_headers["Content-Type"],
+        media_type="audio/mp4",
         headers=resp_headers,
     )
 
