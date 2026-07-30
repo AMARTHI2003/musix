@@ -84,6 +84,37 @@ async def search_songs(q: str = Query(..., min_length=1)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/debug_dl/{video_id}")
+async def debug_dl(video_id: str):
+    """Debug endpoint to run download and return stderr/stdout."""
+    if video_id.endswith(".m4a"):
+        video_id = video_id[:-4]
+    cache_path = os.path.join(CACHE_DIR, f"{video_id}_debug.m4a")
+    if os.path.exists(cache_path):
+        try:
+            os.remove(cache_path)
+        except Exception:
+            pass
+    proc = subprocess.run(
+        [
+            YT_DLP,
+            "-f", "bestaudio[ext=m4a]/bestaudio/best",
+            "-o", cache_path,
+            "--no-playlist", "--no-warnings",
+            f"https://www.youtube.com/watch?v={video_id}",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    return {
+        "returncode": proc.returncode,
+        "stdout": proc.stdout,
+        "stderr": proc.stderr,
+        "exists": os.path.exists(cache_path)
+    }
+
+
 @router.get("/stream/{video_id}")
 async def stream_song(video_id: str):
     """

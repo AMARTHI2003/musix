@@ -2,7 +2,7 @@
   "name": "MUSIX",
   "short_name": "MUSIX",
   "description": "Stream any song from YouTube. Search, play, favourite.",
-  "start_url": "/musix/web/",
+  "start_url": "/musix/",
   "display": "standalone",
   "background_color": "#0d0d0d",
   "theme_color": "#0d0d0d",
