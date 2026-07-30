@@ -1,47 +1,60 @@
-from fastapi import APIRouter, HTTPException, Query
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi.responses import StreamingResponse, Response
 import subprocess
 import asyncio
 import os
 import json
+import sys
+import shutil
+import requests as req_lib
 from concurrent.futures import ThreadPoolExecutor
 
 router = APIRouter(prefix="/songs", tags=["Songs"])
 
-import sys
-import shutil
-
-# Detect yt-dlp binary: use .exe on Windows, system command on Linux (Render)
+# ── Binary detection ──────────────────────────────────────────────────────────
 _win_binary = os.path.join(os.path.dirname(__file__), "..", "yt-dlp.exe")
 if sys.platform == "win32" and os.path.exists(_win_binary):
     YT_DLP = _win_binary
 else:
-    # On Linux (Render.com), yt-dlp is installed via pip
     YT_DLP = shutil.which("yt-dlp") or "yt-dlp"
 
 CACHE_DIR = os.path.join(os.path.dirname(__file__), "..", "audio_cache")
 os.makedirs(CACHE_DIR, exist_ok=True)
 
-# Thread pool for blocking subprocess calls (Windows asyncio subprocess workaround)
 _executor = ThreadPoolExecutor(max_workers=4)
 
+# ── Common yt-dlp flags that bypass bot-detection ─────────────────────────────
+# Using the "android" or "mweb" client sidesteps the sign-in challenge.
+# Also force IPv4 to avoid Render's IPv6 issues.
+BYPASS_ARGS = [
+    "--extractor-args", "youtube:player_client=android,web",
+    "--force-ipv4",
+    "--no-playlist",
+    "--no-warnings",
+    "--no-check-certificates",
+]
 
+
+# ── Search ─────────────────────────────────────────────────────────────────────
 def _run_search(q: str):
     """Blocking search using subprocess (runs in thread pool)."""
     proc = subprocess.run(
-        [YT_DLP, f"ytsearch5:{q}", "--dump-json", "--no-playlist", "--flat-playlist", "--no-warnings"],
+        [YT_DLP, f"ytsearch5:{q}", "--dump-json", "--flat-playlist"] + BYPASS_ARGS,
         capture_output=True,
         text=True,
         timeout=30,
     )
     if proc.returncode != 0:
-        raise RuntimeError(f"yt-dlp failed: {proc.stderr[:200]}")
-    
+        raise RuntimeError(f"yt-dlp search failed: {proc.stderr[:400]}")
+
     results = []
     for line in proc.stdout.strip().split("\n"):
         if not line.strip():
             continue
-        item = json.loads(line)
+        try:
+            item = json.loads(line)
+        except json.JSONDecodeError:
+            continue
         results.append({
             "id": item.get("id"),
             "title": item.get("title"),
@@ -50,23 +63,6 @@ def _run_search(q: str):
             "duration": item.get("duration"),
         })
     return results
-
-
-def _run_download(video_id: str, cache_path: str):
-    """Blocking download using subprocess (runs in thread pool)."""
-    proc = subprocess.run(
-        [
-            YT_DLP,
-            "-f", "bestaudio[ext=m4a]/bestaudio/best",
-            "-o", cache_path,
-            "--no-playlist", "--no-warnings",
-            f"https://www.youtube.com/watch?v={video_id}",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=120,
-    )
-    return proc.returncode
 
 
 @router.get("/search")
@@ -79,80 +75,227 @@ async def search_songs(q: str = Query(..., min_length=1)):
     except subprocess.TimeoutExpired:
         raise HTTPException(status_code=504, detail="Search timed out")
     except Exception as e:
-        import traceback
-        traceback.print_exc()
+        import traceback; traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/debug_dl/{video_id}")
-async def debug_dl(video_id: str):
-    """Debug endpoint to run download and return stderr/stdout."""
-    if video_id.endswith(".m4a"):
-        video_id = video_id[:-4]
-    cache_path = os.path.join(CACHE_DIR, f"{video_id}_debug.m4a")
-    if os.path.exists(cache_path):
-        try:
-            os.remove(cache_path)
-        except Exception:
-            pass
+# ── Stream URL resolution (no download to disk) ───────────────────────────────
+def _get_stream_url(video_id: str) -> str:
+    """
+    Resolve a direct audio stream URL using yt-dlp with Android client bypass.
+    Returns the URL string on success, raises RuntimeError on failure.
+    """
+    url = f"https://www.youtube.com/watch?v={video_id}"
     proc = subprocess.run(
         [
             YT_DLP,
             "-f", "bestaudio[ext=m4a]/bestaudio/best",
-            "-o", cache_path,
-            "--no-playlist", "--no-warnings",
-            f"https://www.youtube.com/watch?v={video_id}",
-        ],
+            "--get-url",
+            url,
+        ] + BYPASS_ARGS,
         capture_output=True,
         text=True,
-        timeout=120,
+        timeout=30,
     )
-    return {
-        "returncode": proc.returncode,
-        "stdout": proc.stdout,
-        "stderr": proc.stderr,
-        "exists": os.path.exists(cache_path)
-    }
+    stream_url = proc.stdout.strip().split("\n")[0].strip()
+    if not stream_url or proc.returncode != 0:
+        raise RuntimeError(
+            f"yt-dlp URL extraction failed (rc={proc.returncode}): {proc.stderr[:400]}"
+        )
+    return stream_url
 
 
+def _get_stream_url_pytubefix(video_id: str) -> str:
+    """Fallback: use pytubefix to get a direct stream URL."""
+    try:
+        from pytubefix import YouTube
+        from pytubefix.cli import on_progress
+        yt = YouTube(
+            f"https://www.youtube.com/watch?v={video_id}",
+            use_oauth=False,
+            allow_oauth_cache=False,
+        )
+        stream = yt.streams.filter(only_audio=True, file_extension="mp4").first()
+        if not stream:
+            stream = yt.streams.filter(only_audio=True).first()
+        if not stream:
+            raise RuntimeError("No audio stream found via pytubefix")
+        return stream.url
+    except Exception as e:
+        raise RuntimeError(f"pytubefix failed: {e}")
+
+
+def _resolve_stream_url(video_id: str) -> str:
+    """Try yt-dlp first, fall back to pytubefix."""
+    try:
+        return _get_stream_url(video_id)
+    except Exception as e1:
+        print(f"[WARN] yt-dlp stream resolution failed: {e1}. Trying pytubefix...")
+        try:
+            return _get_stream_url_pytubefix(video_id)
+        except Exception as e2:
+            raise RuntimeError(f"All stream resolvers failed. yt-dlp: {e1} | pytubefix: {e2}")
+
+
+# ── Proxy-stream endpoint ─────────────────────────────────────────────────────
 @router.get("/stream/{video_id}")
-async def stream_song(video_id: str):
+async def stream_song(video_id: str, request: Request):
     """
-    Stream audio for a given YouTube video ID.
-    Downloads to cache on first request, then serves from cache.
+    Resolve a direct audio URL and proxy it to the client.
+    This avoids downloading to disk and streams directly.
     """
-    # Strip .m4a extension if present
     if video_id.endswith(".m4a"):
         video_id = video_id[:-4]
 
+    # 1. Check disk cache first (fast path)
     cache_path = os.path.join(CACHE_DIR, f"{video_id}.m4a")
+    if os.path.exists(cache_path) and os.path.getsize(cache_path) > 10_000:
+        file_size = os.path.getsize(cache_path)
 
-    # Download if not cached
-    if not os.path.exists(cache_path):
+        # Handle Range requests for seekable audio
+        range_header = request.headers.get("range")
+        if range_header:
+            start, end = _parse_range(range_header, file_size)
+            length = end - start + 1
+
+            def ranged_iter():
+                with open(cache_path, "rb") as f:
+                    f.seek(start)
+                    remaining = length
+                    while remaining > 0:
+                        chunk = f.read(min(65536, remaining))
+                        if not chunk:
+                            break
+                        remaining -= len(chunk)
+                        yield chunk
+
+            return StreamingResponse(
+                ranged_iter(),
+                status_code=206,
+                media_type="audio/mp4",
+                headers={
+                    "Content-Range": f"bytes {start}-{end}/{file_size}",
+                    "Content-Length": str(length),
+                    "Accept-Ranges": "bytes",
+                },
+            )
+
+        def file_iter():
+            with open(cache_path, "rb") as f:
+                while chunk := f.read(65536):
+                    yield chunk
+
+        return StreamingResponse(
+            file_iter(),
+            media_type="audio/mp4",
+            headers={
+                "Content-Length": str(file_size),
+                "Accept-Ranges": "bytes",
+            },
+        )
+
+    # 2. Resolve stream URL
+    try:
         loop = asyncio.get_event_loop()
-        returncode = await loop.run_in_executor(_executor, _run_download, video_id, cache_path)
+        stream_url = await loop.run_in_executor(_executor, _resolve_stream_url, video_id)
+    except Exception as e:
+        print(f"[ERROR] Could not resolve stream for {video_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Could not resolve stream: {e}")
 
-        if not os.path.exists(cache_path):
-            raise HTTPException(status_code=500, detail="Failed to download audio")
+    # 3. Proxy the stream from Google's servers to the client
+    #    Forward Range header if present so seeking works
+    range_header = request.headers.get("range")
+    upstream_headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Linux; Android 11; Pixel 5) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/90.0.4430.91 Mobile Safari/537.36"
+        ),
+        "Accept": "*/*",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Connection": "keep-alive",
+    }
+    if range_header:
+        upstream_headers["Range"] = range_header
 
-    file_size = os.path.getsize(cache_path)
+    try:
+        upstream = req_lib.get(stream_url, headers=upstream_headers, stream=True, timeout=30)
+        upstream.raise_for_status()
+    except Exception as e:
+        print(f"[ERROR] Upstream fetch failed for {video_id}: {e}")
+        raise HTTPException(status_code=502, detail=f"Upstream audio fetch failed: {e}")
 
-    def file_iterator():
-        with open(cache_path, "rb") as f:
-            while chunk := f.read(65536):
+    status_code = upstream.status_code  # 200 or 206
+    resp_headers = {
+        "Accept-Ranges": "bytes",
+        "Cache-Control": "no-cache",
+        "Content-Type": upstream.headers.get("Content-Type", "audio/mp4"),
+    }
+    if "Content-Length" in upstream.headers:
+        resp_headers["Content-Length"] = upstream.headers["Content-Length"]
+    if "Content-Range" in upstream.headers:
+        resp_headers["Content-Range"] = upstream.headers["Content-Range"]
+
+    def upstream_iter():
+        for chunk in upstream.iter_content(chunk_size=65536):
+            if chunk:
                 yield chunk
 
     return StreamingResponse(
-        file_iterator(),
-        media_type="audio/mp4",
-        headers={
-            "Content-Length": str(file_size),
-            "Accept-Ranges": "bytes",
-            "Content-Disposition": f'inline; filename="{video_id}.m4a"',
-        },
+        upstream_iter(),
+        status_code=status_code,
+        media_type=resp_headers["Content-Type"],
+        headers=resp_headers,
     )
 
 
+def _parse_range(range_header: str, file_size: int):
+    """Parse HTTP Range header. Returns (start, end) inclusive."""
+    try:
+        unit, ranges = range_header.split("=")
+        start_str, end_str = ranges.split("-")
+        start = int(start_str) if start_str else 0
+        end = int(end_str) if end_str else file_size - 1
+        end = min(end, file_size - 1)
+        return start, end
+    except Exception:
+        return 0, file_size - 1
+
+
+# ── Debug endpoint ─────────────────────────────────────────────────────────────
+@router.get("/debug_dl/{video_id}")
+async def debug_dl(video_id: str):
+    """Debug endpoint: test yt-dlp URL extraction and return raw output."""
+    if video_id.endswith(".m4a"):
+        video_id = video_id[:-4]
+    url = f"https://www.youtube.com/watch?v={video_id}"
+    proc = subprocess.run(
+        [YT_DLP, "-f", "bestaudio[ext=m4a]/bestaudio/best", "--get-url", url] + BYPASS_ARGS,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    stream_url = proc.stdout.strip().split("\n")[0] if proc.stdout.strip() else None
+
+    # Also try pytubefix
+    pytubefix_url = None
+    pytubefix_error = None
+    try:
+        pytubefix_url = _get_stream_url_pytubefix(video_id)
+    except Exception as e:
+        pytubefix_error = str(e)
+
+    return {
+        "video_id": video_id,
+        "yt_dlp_returncode": proc.returncode,
+        "yt_dlp_stream_url": stream_url,
+        "yt_dlp_stderr": proc.stderr[:1000],
+        "pytubefix_stream_url": pytubefix_url,
+        "pytubefix_error": pytubefix_error,
+    }
+
+
+# ── Lyrics placeholder ─────────────────────────────────────────────────────────
 @router.get("/lyrics/{video_id}")
 async def get_lyrics(video_id: str):
     """Placeholder for lyrics fetching."""
