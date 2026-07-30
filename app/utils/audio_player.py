@@ -27,15 +27,23 @@ class AudioPlayer(EventDispatcher):
         super().__init__(**kwargs)
         self._sound = None
         self._update_event = None
-        import os
-        from kivy.app import App
-        # Use Kivy's built-in user_data_dir to avoid write permission issues on Android
-        app = App.get_running_app()
-        if app:
-            self.cache_dir = os.path.join(app.user_data_dir, ".audio_cache")
-        else:
-            self.cache_dir = os.path.join(os.path.dirname(__file__), "..", ".audio_cache")
-        os.makedirs(self.cache_dir, exist_ok=True)
+        self._cache_dir = None
+
+    @property
+    def cache_dir(self):
+        """Resolved lazily on first use, since this singleton is created at
+        module-import time — before HarmonyApp.run() exists — so
+        App.get_running_app() is always None if resolved in __init__."""
+        if self._cache_dir is None:
+            import os
+            from kivy.app import App
+            app = App.get_running_app()
+            if app:
+                self._cache_dir = os.path.join(app.user_data_dir, ".audio_cache")
+            else:
+                self._cache_dir = os.path.join(os.path.dirname(__file__), "..", ".audio_cache")
+            os.makedirs(self._cache_dir, exist_ok=True)
+        return self._cache_dir
 
     def play_song(self, song):
         """Play a song by downloading it to cache first."""
