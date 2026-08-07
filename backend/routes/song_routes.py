@@ -165,37 +165,32 @@ async def search_songs(q: str = Query(..., min_length=1)):
 
 # ── Stream URL resolution (no download to disk) ───────────────────────────────
 def _get_stream_url(video_id: str) -> str:
-    """
-    Resolve a direct audio stream URL using yt-dlp with Android client bypass.
-    Returns the URL string on success, raises RuntimeError on failure.
-    """
+    """Resolve stream URL using yt-dlp Python API (no subprocess, works on Python 3.14)."""
+    import yt_dlp
     url = f"https://www.youtube.com/watch?v={video_id}"
-    proc = subprocess.run(
-        [
-            YT_DLP,
-            "-f", "bestaudio[ext=m4a]/bestaudio/best",
-            "--get-url",
-            url,
-        ] + BYPASS_ARGS,
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-    # Check stdout for a valid URL — returncode may be 1 due to cookie-save
-    # failures on read-only filesystems (Render), even if URL extraction succeeded.
-    stream_url = proc.stdout.strip().split("\n")[0].strip()
-    if stream_url and stream_url.startswith("http"):
-        return stream_url
-    raise RuntimeError(
-        f"yt-dlp URL extraction failed (rc={proc.returncode}): {proc.stderr[:400]}"
-    )
+    ydl_opts = {
+        'quiet': True,
+        'no_warnings': True,
+        'format': 'bestaudio[ext=m4a]/bestaudio/best',
+        'force_ipv4': True,
+        'extractor_args': {'youtube': {'player_client': ['android', 'web']}},
+    }
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(url, download=False)
+        if info and info.get('url'):
+            return info['url']
+        # For format lists, get the best audio URL
+        fmts = info.get('formats', []) if info else []
+        for f in reversed(fmts):
+            if f.get('url') and f.get('acodec') != 'none':
+                return f['url']
+        raise RuntimeError("No stream URL found in yt-dlp info")
 
 
 def _get_stream_url_pytubefix(video_id: str) -> str:
     """Fallback: use pytubefix to get a direct stream URL."""
     try:
         from pytubefix import YouTube
-        from pytubefix.cli import on_progress
         yt = YouTube(
             f"https://www.youtube.com/watch?v={video_id}",
             use_oauth=False,
