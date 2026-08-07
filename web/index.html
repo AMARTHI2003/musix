@@ -413,11 +413,13 @@ audio.addEventListener('error', (e) => {
   const codes = {1:'ABORTED',2:'NETWORK',3:'DECODE',4:'NOT_SUPPORTED'};
   const msg = codes[audio.error?.code] || 'UNKNOWN';
   console.error('Audio error:', msg, audio.src);
+  alert(`Audio Error: ${msg}. Source: ${audio.src.substring(0, 50)}...`);
   setLoading(false);
 });
 
 // ── State ──
 let queue = [], qIndex = 0, currentSong = null;
+
 let favourites = JSON.parse(localStorage.getItem("musix_favs") || "[]");
 let homeResults = {};
 
@@ -603,6 +605,7 @@ function playSong(song, idx, songList) {
     .then(() => setLoading(false))
     .catch(err => {
       console.warn('Autoplay blocked or failed:', err);
+      alert(`Play Failed: ${err.message || err.name || err}`);
       setLoading(false);
       // Still show paused state — user can tap play
     });
@@ -615,7 +618,11 @@ function setLoading(v) {
 
 function togglePlay() {
   if (!currentSong) return;
-  if (audio.paused) audio.play(); else audio.pause();
+  if (audio.paused) {
+    audio.play().catch(err => alert(`Play Failed: ${err.message || err.name || err}`));
+  } else {
+    audio.pause();
+  }
 }
 
 function prevSong() {
