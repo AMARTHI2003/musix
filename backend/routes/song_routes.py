@@ -307,12 +307,20 @@ async def stream_song(video_id: str, request: Request):
         raise HTTPException(status_code=502, detail=f"Upstream audio fetch failed: {e}")
 
     status_code = upstream.status_code  # 200 or 206
-    # Force audio/mp4 — Google returns "video/mp4" which browsers refuse to
-    # play inside an <audio> element. The data is audio-only either way.
+    
+    # YouTube often returns "video/mp4" or "video/webm" for audio-only streams.
+    # We must remap "video" to "audio" so the <audio> element accepts it, 
+    # BUT we must preserve the actual container format (mp4 vs webm).
+    upstream_ct = upstream.headers.get("Content-Type", "").lower()
+    if "webm" in upstream_ct:
+        out_ct = "audio/webm"
+    else:
+        out_ct = "audio/mp4"
+
     resp_headers = {
         "Accept-Ranges": "bytes",
         "Cache-Control": "no-cache",
-        "Content-Type": "audio/mp4",
+        "Content-Type": out_ct,
     }
     if "Content-Length" in upstream.headers:
         resp_headers["Content-Length"] = upstream.headers["Content-Length"]
@@ -327,7 +335,7 @@ async def stream_song(video_id: str, request: Request):
     return StreamingResponse(
         upstream_iter(),
         status_code=status_code,
-        media_type="audio/mp4",
+        media_type=out_ct,
         headers=resp_headers,
     )
 
